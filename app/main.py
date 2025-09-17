@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from typing import Optional
 
 from aiogram import Bot, Dispatcher, F
@@ -170,18 +171,23 @@ async def on_text(message: Message) -> None:
 		note=parsed.note,
 	)
 	all_time = total_all_time(message.chat.id)
-	quip = generate_motivation(all_time, parsed.amount, parsed.category)
+	quip = generate_motivation(all_time, parsed.amount, parsed.category, chat_id=message.chat.id)
 
 	reply_text = (
 		f"Добавлено: {parsed.amount:.0f} {parsed.currency} в '{parsed.category}'.\n"
 		f"Итого за период: {all_time:.0f} {settings.default_currency}.\n\n{quip}"
 	)
-	await message.reply(reply_text)
+	await message.reply(reply_text, reply_to_message_id=message.message_id)
 
 	# Optional: image banner
+	subtitle_variants = [
+		"Ещё немного — и берём полезную штуку",
+		"Дальше — только трезвость и покупки",
+		"Почти хватит на что-то стоящее",
+	]
 	banner = generate_banner(
 		text_top=f"Всего: {all_time:.0f} {settings.default_currency}",
-		text_bottom="Ещё немного — и купим что-то полезное",
+		text_bottom=random.choice(subtitle_variants),
 	)
 	await message.reply_photo(photo=banner)
 

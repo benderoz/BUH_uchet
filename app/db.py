@@ -49,6 +49,16 @@ class Category(Base):
 	aliases: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)  # pipe-separated aliases
 
 
+class BotState(Base):
+	__tablename__ = "bot_state"
+
+	id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+	chat_id: Mapped[int] = mapped_column(index=True)
+	key: Mapped[str] = mapped_column(String(64), index=True)
+	value: Mapped[str] = mapped_column(String(1024))
+	updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+
+
 def init_db() -> None:
 	Base.metadata.create_all(bind=engine)
 
@@ -64,3 +74,23 @@ def session_scope():
 		raise
 	finally:
 		session.close()
+
+
+def get_state(chat_id: int, key: str) -> Optional[str]:
+	with session_scope() as s:
+		row = s.execute(
+			select(BotState).where(BotState.chat_id == chat_id, BotState.key == key)
+		).scalar_one_or_none()
+		return row.value if row else None
+
+
+def set_state(chat_id: int, key: str, value: str) -> None:
+	with session_scope() as s:
+		row = s.execute(
+			select(BotState).where(BotState.chat_id == chat_id, BotState.key == key)
+		).scalar_one_or_none()
+		if row:
+			row.value = value
+			row.updated_at = datetime.utcnow()
+			return
+		s.add(BotState(chat_id=chat_id, key=key, value=value))
