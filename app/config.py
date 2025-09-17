@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from typing import Optional, Set
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from dotenv import load_dotenv
 
 
@@ -16,19 +16,27 @@ class Settings(BaseModel):
 	default_currency: str = Field(default="₽", validation_alias="DEFAULT_CURRENCY")
 	week_start: str = Field(default="monday", validation_alias="WEEK_START")
 
+	@field_validator("admins", mode="before")
+	@classmethod
+	def _parse_admins(cls, v):
+		# Accept: None, int, list[int], set[int], or string like "1,2,3" or "123"
+		if v is None or v == "":
+			return set()
+		if isinstance(v, (set, list)):
+			return {int(x) for x in v}
+		if isinstance(v, int):
+			return {v}
+		if isinstance(v, str):
+			parts = [p.strip() for p in v.split(",") if p.strip()]
+			return {int(p) for p in parts} if parts else set()
+		return v
+
 	@classmethod
 	def load(cls) -> "Settings":
 		# Load from .env if present
 		load_dotenv(override=False)
-		# Preprocess admins and optional ids
+		# Preprocess optional ids
 		env = dict(os.environ)
-		admins_raw = env.get("ADMINS", "").strip()
-		if admins_raw:
-			try:
-				env["ADMINS"] = ",".join(str(int(x.strip())) for x in admins_raw.split(",") if x.strip())
-			except ValueError:
-				# leave as-is; pydantic will error with a clear message
-				pass
 		allowed_raw = env.get("ALLOWED_CHAT_ID", "").strip()
 		if allowed_raw == "":
 			env.pop("ALLOWED_CHAT_ID", None)
