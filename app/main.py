@@ -7,7 +7,7 @@ from typing import Optional
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
-from aiogram.types import Message, FSInputFile
+from aiogram.types import Message, FSInputFile, BufferedInputFile
 
 from .config import get_settings
 from .db import init_db
@@ -214,8 +214,7 @@ async def on_text(message: Message) -> None:
 	desc = f"Пара пользователей: {user_desc_1}".strip()
 	img = generate_image_gemini(desc, idea, all_time, style)
 	if img:
-		# Wrap BytesIO with FSInputFile and filename
-		file = FSInputFile(img, filename="idea.png")
+		file = BufferedInputFile(img.getvalue(), filename="idea.png")
 		await message.reply_photo(photo=file, caption=f"Стиль: {style}")
 		return
 
@@ -229,7 +228,7 @@ async def on_text(message: Message) -> None:
 		text_top=f"Всего: {all_time:.0f} {settings.default_currency}",
 		text_bottom=random.choice(subtitle_variants),
 	)
-	file = FSInputFile(banner, filename="banner.png")
+	file = BufferedInputFile(banner.getvalue(), filename="banner.png")
 	await message.reply_photo(photo=file)
 
 
