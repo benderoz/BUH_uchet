@@ -171,7 +171,6 @@ async def cmd_undo(message: Message) -> None:
 
 
 async def _describe_user(bot: Bot, user_id: int) -> str:
-	# Try to get recent profile photos and create a simple textual descriptor
 	try:
 		photos = await bot.get_user_profile_photos(user_id=user_id, offset=0, limit=1)
 		count = photos.total_count or 0
@@ -207,26 +206,20 @@ async def on_text(message: Message) -> None:
 		f"Добавлено: {parsed.amount:.0f} {parsed.currency} в '{parsed.category}'.\n"
 		f"Итого за период: {all_time:.0f} {settings.default_currency}.\n\n{quip}"
 	)
-	await message.reply(rely_text := reply_text, reply_to_message_id=message.message_id)
+	await message.reply(reply_text, reply_to_message_id=message.message_id)
 
-	# Image generation: choose style and prompt Gemini Images
+	# Image generation
 	style = CHAT_STYLE.get(message.chat.id, random.choice(STYLE_LIST))
 	user_desc_1 = await _describe_user(bot, message.from_user.id)
-	user_desc_2 = ""
-	try:
-		if message.chat and message.chat.type.endswith("group"):
-			# Try to use sender and one more member (best-effort)
-			user_desc_2 = "и второй участник чата"
-	except Exception:
-		user_desc_2 = ""
-	desc = f"Пара пользователей: {user_desc_1} {user_desc_2}".strip()
-
+	desc = f"Пара пользователей: {user_desc_1}".strip()
 	img = generate_image_gemini(desc, idea, all_time, style)
 	if img:
-		await message.reply_photo(photo=img, caption=f"Стиль: {style}")
+		# Wrap BytesIO with FSInputFile and filename
+		file = FSInputFile(img, filename="idea.png")
+		await message.reply_photo(photo=file, caption=f"Стиль: {style}")
 		return
 
-	# Fallback: banner
+	# Fallback banner
 	subtitle_variants = [
 		"Ещё немного — и берём полезную штуку",
 		"Дальше — только трезвость и покупки",
@@ -236,7 +229,8 @@ async def on_text(message: Message) -> None:
 		text_top=f"Всего: {all_time:.0f} {settings.default_currency}",
 		text_bottom=random.choice(subtitle_variants),
 	)
-	await message.reply_photo(photo=banner)
+	file = FSInputFile(banner, filename="banner.png")
+	await message.reply_photo(photo=file)
 
 
 async def main() -> None:

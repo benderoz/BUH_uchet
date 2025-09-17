@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import os
 from io import BytesIO
 from typing import Optional, Tuple
 
@@ -65,11 +66,18 @@ def _try_models_generate_image(prompt: str) -> Optional[BytesIO]:
 	if genai is None:
 		logger.warning("google-generativeai not available; skipping Gemini Images")
 		return None
-	model_names = [
-		"imagen-3.0",            # common name
-		"imagegeneration",        # alt name used in some SDKs
-	]
-	for name in model_names:
+	# Allow override via env
+	override = os.getenv("IMAGE_MODEL", "").strip()
+	if override:
+		candidates = [override]
+	else:
+		candidates = [
+			"imagegeneration@005",
+			"imagegeneration@002",
+			"imagen-3.0",
+			"imagegeneration",
+		]
+	for name in candidates:
 		try:
 			model = genai.GenerativeModel(name)
 			resp = model.generate_content(prompt)
