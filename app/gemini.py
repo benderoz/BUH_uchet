@@ -48,13 +48,11 @@ def _save_recent(chat_id: int, recent: List[str]) -> None:
 def _ask_gemini_for_items(total: float, n: int = 4) -> List[str]:
 	gen_config = {"temperature": 1.0, "top_p": 0.95, "top_k": 40}
 	prompt = (
-		"Ты помощник по покупкам. По списку интересов пользователей и бюджету предложи варианты вещей, "
-		"которые можно купить СЕЙЧАС на этот бюджет в моей стране (грубые цены). "
-		"Нужны ИМЕНА ПРЕДМЕТОВ, коротко, без брендов (если не очевидно), без эмодзи. "
-		"Ответь ТОЛЬКО JSON массивом строк (пример: [\"гантели 24 кг\", \"мотоциклетный шлем\"]). Без пояснений.\n"
+		"Ты помощник по покупкам. Дай ИДЕИ ПРЕДМЕТОВ строго на основе ОБЩЕЙ суммы за весь период (не последней траты). "
+		"Ответь ТОЛЬКО JSON массивом коротких названий вещей, без брендов и эмодзи.\n"
 		f"Интересы: {', '.join(INTERESTS)}\n"
-		f"Бюджет: примерно {total:.0f} {_SETTINGS.default_currency}\n"
-		f"Количество вариантов: {n}"
+		f"Общая сумма за весь период: {total:.0f} {_SETTINGS.default_currency}\n"
+		f"Сколько вариантов нужно: {n}"
 	)
 	try:
 		resp = _MODEL.generate_content(prompt, generation_config=gen_config)
@@ -93,14 +91,13 @@ def generate_motivation(total_all_time: float, last_amount: float, last_category
 	idea = pick_item_for_budget(total_all_time, chat_id=chat_id)
 	gen_config = {"temperature": 1.25, "top_p": 0.95, "top_k": 40}
 	prompt = (
-		"Мы вдвоём ведём учёт трат на алкоголь/развлечения. "
-		f"Последний тратились: {last_amount:.0f} {_SETTINGS.default_currency} на категорию '{last_category}'. "
-		f"Всего за период: {total_all_time:.0f} {_SETTINGS.default_currency}. "
+		"Мы вдвоём ведём учёт трат. Используй ОБЩУЮ сумму за весь период для сравнений (не последнюю трату). "
+		f"Последняя трата: {last_amount:.0f} {_SETTINGS.default_currency} на '{last_category}'. "
+		f"Общая сумма за весь период: {total_all_time:.0f} {_SETTINGS.default_currency}. "
 		"Сгенерируй 1–2 очень коротких предложения, чёрный юмор с матерком, без эмодзи. "
 		"Избегай дискриминации групп и прямых угроз, но допускай сарказм и жёсткость. "
-		"Вставь идею покупки, которую уже могли бы купить на общий бюджет, формулируй свежо, без повторов. "
-		f"Идея покупки: {idea}. "
-		"Не упоминай, что ты ИИ."
+		f"Упомяни предмет, который реально можно было бы купить на общую сумму: {idea}. "
+		"Формулируй свежо, не повторяйся."
 	)
 	try:
 		resp = _MODEL.generate_content(prompt, generation_config=gen_config)

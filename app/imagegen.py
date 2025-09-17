@@ -6,7 +6,7 @@ import os
 from io import BytesIO
 from typing import Optional, Tuple
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageStat
 
 try:
 	import google.generativeai as genai
@@ -41,12 +41,31 @@ STYLE_PRESETS = {
 }
 
 
-def generate_banner(text_top: str, text_bottom: Optional[str] = None, width: int = 800, height: int = 400) -> BytesIO:
-	img = Image.new("RGB", (width, height), color=(20, 20, 20))
+def _is_image_valid(b: bytes) -> bool:
+	try:
+		bio = BytesIO(b)
+		img = Image.open(bio)
+		img.verify()  # basic integrity
+		bio.seek(0)
+		img = Image.open(bio).convert("RGB")
+		w, h = img.size
+		if w < 128 or h < 128:
+			return False
+		stat = ImageStat.Stat(img)
+		# stddev per channel; near-zero => almost flat (e.g., gray rectangle)
+		if max(stat.stddev) < 1.0:
+			return False
+		return True
+	except Exception:
+		return False
+
+
+def generate_banner(text_top: str, text_bottom: Optional[str] = None, width: int = 900, height: int = 500) -> BytesIO:
+	img = Image.new("RGB", (width, height), color=(15, 15, 20))
 	draw = ImageDraw.Draw(img)
 	font_big = ImageFont.load_default()
 	font_small = ImageFont.load_default()
-	margin = 20
+	margin = 24
 	w_top, h_top = draw.textbbox((0, 0), text_top, font=font_big)[2:]
 	draw.text(((width - w_top) / 2, margin), text_top, font=font_big, fill=(240, 240, 240))
 	if text_bottom:
@@ -67,10 +86,10 @@ def generate_banner_for_item(item: str, style: str, total: float) -> BytesIO:
 def _compose_image_prompt(user_descriptions: str, item: str, total: float, style: str) -> str:
 	style_preset = STYLE_PRESETS.get(style, "")
 	return (
-		"Сгенерируй горизонтальное изображение 16:9: двое парней из Telegram (образы по фото), "
+		"Создай горизонтальное изображение 16:9: двое парней (похоже на пользователей Telegram по описанию), "
 		f"держат/рассматривают предмет: {item}. "
 		"Добавь атмосферу и детали по стилю. Без текста на изображении, без логотипов. "
-		f"Бюджет: около {total:.0f} {_SETTINGS.default_currency}. "
+		f"Общий бюджет (ориентир для значимости предмета): {total:.0f} {_SETTINGS.default_currency}. "
 		f"Стиль: {style} ({style_preset})."
 	)
 
@@ -100,6 +119,9 @@ def _try_google_generativeai(prompt: str) -> Optional[BytesIO]:
 			if not b64:
 				continue
 			raw = base64.b64decode(b64)
+			if not _is_image_valid(raw):
+				logger.info("Generated image failed validation (integrity/flat).")
+				continue
 			bio = BytesIO(raw)
 			bio.seek(0)
 			return bio
@@ -135,11 +157,13 @@ def _try_google_genai_stream(prompt: str) -> Optional[BytesIO]:
 				break
 		if not buf:
 			return None
-		# google-genai returns bytes already; ensure BytesIO
 		if isinstance(buf, str):
 			data = base64.b64decode(buf)
 		else:
 			data = buf
+		if not _is_image_valid(data):
+			logger.info("Streamed image failed validation (integrity/flat).")
+			return None
 		bio = BytesIO(data)
 		bio.seek(0)
 		return bio
