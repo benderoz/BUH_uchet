@@ -15,9 +15,8 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY . /app
 
-# Create data dir for sqlite
+# Create data dir for sqlite (Railway Volume will be mounted to /data)
 RUN mkdir -p /data
-VOLUME ["/data"]
 
 # Default command: start the bot (long polling)
 CMD ["python", "-m", "app.main"]
