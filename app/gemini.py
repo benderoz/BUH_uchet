@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import random
 from typing import Optional, List, Tuple
 
@@ -14,8 +15,9 @@ _SETTINGS = get_settings()
 
 genai.configure(api_key=_SETTINGS.gemini_api_key)
 
-# Use a faster model; allow edgy tone via prompts
-_MODEL = genai.GenerativeModel("gemini-1.5-flash")
+# Text model (configurable, default to Gemini 2.5 Flash)
+_TEXT_MODEL_NAME = os.getenv("TEXT_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash"
+_MODEL = genai.GenerativeModel(_TEXT_MODEL_NAME)
 
 
 INTERESTS = [
