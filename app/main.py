@@ -12,7 +12,7 @@ from aiogram.types import Message, FSInputFile
 from .config import get_settings
 from .db import init_db
 from .gemini import generate_motivation
-from .imagegen import generate_banner
+from .imagegen import generate_banner, generate_image_gemini, STYLE_PRESETS
 from .logic import (
 	add_expense,
 	add_or_update_category,
@@ -33,6 +33,10 @@ settings = get_settings()
 bot = Bot(token=settings.telegram_bot_token)
 dp = Dispatcher()
 
+# Simple in-memory style choice per chat (stateless across restarts)
+CHAT_STYLE: dict[int, str] = {}
+STYLE_LIST = list(STYLE_PRESETS.keys())
+
 
 def allowed_chat(chat_id: int) -> bool:
 	if settings.allowed_chat_id is None:
@@ -40,41 +44,20 @@ def allowed_chat(chat_id: int) -> bool:
 	return chat_id == settings.allowed_chat_id
 
 
-@dp.message(Command("start", "help"))
-async def cmd_start(message: Message) -> None:
-	if not message.chat:
+@dp.message(Command("style"))
+async def cmd_style(message: Message) -> None:
+	if not message.chat or not message.text:
 		return
-	if not allowed_chat(message.chat.id):
-		await message.reply("Этот бот привязан к другому групповому чату.")
+	parts = message.text.split(maxsplit=1)
+	if len(parts) < 2:
+		await message.reply("Задай стиль: /style <стиль>. Доступно: " + ", ".join(STYLE_LIST))
 		return
-	text = (
-		"Добавляй траты просто сообщением: '1500 алкоголь бар' или '250 суши еда'.\n"
-		"Команды: /stats, /week, /month, /all, /me, /categories, /addcat, /undo."
-	)
-	await message.reply(text)
-
-
-@dp.message(Command("categories"))
-async def cmd_categories(message: Message) -> None:
-	await message.reply("Категории пополняются автоматически по алиасам. Добавить: /addcat <имя> | алиасы...")
-
-
-@dp.message(Command("addcat"))
-async def cmd_addcat(message: Message) -> None:
-	user_id = message.from_user.id if message.from_user else 0
-	if user_id not in settings.admins:
-		await message.reply("Только админы могут добавлять категории.")
+	style = parts[1].strip().lower()
+	if style not in STYLE_PRESETS:
+		await message.reply("Не знаю такой стиль. Доступно: " + ", ".join(STYLE_LIST))
 		return
-	args = (message.text or "").split(maxsplit=1)
-	if len(args) < 2:
-		await message.reply("Формат: /addcat <имя> | алиас1 | алиас2 ...")
-		return
-	payload = args[1]
-	parts = [p.strip() for p in payload.split("|")]
-	name = parts[0]
-	aliases = parts[1:] if len(parts) > 1 else []
-	add_or_update_category(name, aliases)
-	await message.reply(f"Категория '{name}' обновлена. Алиасы: {', '.join(aliases) if aliases else '—'}")
+	CHAT_STYLE[message.chat.id] = style
+	await message.reply(f"Стиль установлен: {style}")
 
 
 async def reply_stats(message: Message) -> None:
@@ -100,6 +83,44 @@ async def reply_stats(message: Message) -> None:
 		"Топ категории (месяц):\n" + ("\n".join(cat_lines) or "—")
 	)
 	await message.reply(text)
+
+
+@dp.message(Command("start", "help"))
+async def cmd_start(message: Message) -> None:
+	if not message.chat:
+		return
+	if not allowed_chat(message.chat.id):
+		await message.reply("Этот бот привязан к другому групповому чату.")
+		return
+	text = (
+		"Добавляй траты просто сообщением: '1500 алкоголь бар' или '250 суши еда'.\n"
+		"Команды: /stats, /week, /month, /all, /me, /categories, /addcat, /undo, /style.\n"
+		"/style <стиль> — выбор стиля картинки: " + ", ".join(STYLE_LIST)
+	)
+	await message.reply(text)
+
+
+@dp.message(Command("categories"))
+async def cmd_categories(message: Message) -> None:
+	await message.reply("Категории пополняются автоматически по алиасам. Добавить: /addcat <имя> | алиасы...")
+
+
+@dp.message(Command("addcat"))
+async def cmd_addcat(message: Message) -> None:
+	user_id = message.from_user.id if message.from_user else 0
+	if user_id not in settings.admins:
+		await message.reply("Только админы могут добавлять категории.")
+		return
+	args = (message.text or "").split(maxsplit=1)
+	if len(args) < 2:
+		await message.reply("Формат: /addcat <имя> | алиас1 | алиас2 ...")
+		return
+	payload = args[1]
+	parts = [p.strip() for p in payload.split("|")]
+	name = parts[0]
+	aliases = parts[1:] if len(parts) > 1 else []
+	add_or_update_category(name, aliases)
+	await message.reply(f"Категория '{name}' обновлена. Алиасы: {', '.join(aliases) if aliases else '—'}")
 
 
 @dp.message(Command("stats"))
@@ -136,7 +157,6 @@ async def cmd_me(message: Message) -> None:
 	if not message.chat or not message.from_user:
 		return
 	uid = message.from_user.id
-	# Using month for personal quick view
 	per_user = sum_by_user(message.chat.id, "month")
 	total = per_user.get(uid, 0.0)
 	await message.reply(f"За месяц ты потратил: {total:.0f} {settings.default_currency}")
@@ -150,6 +170,16 @@ async def cmd_undo(message: Message) -> None:
 	await message.reply("Удалил последнюю запись за сегодня." if ok else "Нечего отменять сегодня.")
 
 
+async def _describe_user(bot: Bot, user_id: int) -> str:
+	# Try to get recent profile photos and create a simple textual descriptor
+	try:
+		photos = await bot.get_user_profile_photos(user_id=user_id, offset=0, limit=1)
+		count = photos.total_count or 0
+		return f"есть {count} фото профиля"
+	except Exception:
+		return "фото профиля недоступны"
+
+
 @dp.message(F.text)
 async def on_text(message: Message) -> None:
 	if not message.chat or not message.from_user or not message.text:
@@ -160,9 +190,9 @@ async def on_text(message: Message) -> None:
 	ensure_user(message.from_user.id, message.from_user.username)
 	parsed = parse_message(message.text)
 	if not parsed:
-		return  # ignore non-amount messages in group
+		return
 
-	exp = add_expense(
+	_ = add_expense(
 		tg_user_id=message.from_user.id,
 		chat_id=message.chat.id,
 		amount=parsed.amount,
@@ -171,15 +201,32 @@ async def on_text(message: Message) -> None:
 		note=parsed.note,
 	)
 	all_time = total_all_time(message.chat.id)
-	quip = generate_motivation(all_time, parsed.amount, parsed.category, chat_id=message.chat.id)
+	quip, idea = generate_motivation(all_time, parsed.amount, parsed.category, chat_id=message.chat.id)
 
 	reply_text = (
 		f"Добавлено: {parsed.amount:.0f} {parsed.currency} в '{parsed.category}'.\n"
 		f"Итого за период: {all_time:.0f} {settings.default_currency}.\n\n{quip}"
 	)
-	await message.reply(reply_text, reply_to_message_id=message.message_id)
+	await message.reply(rely_text := reply_text, reply_to_message_id=message.message_id)
 
-	# Optional: image banner
+	# Image generation: choose style and prompt Gemini Images
+	style = CHAT_STYLE.get(message.chat.id, random.choice(STYLE_LIST))
+	user_desc_1 = await _describe_user(bot, message.from_user.id)
+	user_desc_2 = ""
+	try:
+		if message.chat and message.chat.type.endswith("group"):
+			# Try to use sender and one more member (best-effort)
+			user_desc_2 = "и второй участник чата"
+	except Exception:
+		user_desc_2 = ""
+	desc = f"Пара пользователей: {user_desc_1} {user_desc_2}".strip()
+
+	img = generate_image_gemini(desc, idea, all_time, style)
+	if img:
+		await message.reply_photo(photo=img, caption=f"Стиль: {style}")
+		return
+
+	# Fallback: banner
 	subtitle_variants = [
 		"Ещё немного — и берём полезную штуку",
 		"Дальше — только трезвость и покупки",

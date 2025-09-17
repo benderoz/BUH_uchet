@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import random
-from typing import Optional, List
+from typing import Optional, List, Tuple
 
 import google.generativeai as genai
 
@@ -57,13 +57,11 @@ def _ask_gemini_for_items(total: float, n: int = 4) -> List[str]:
 	try:
 		resp = _MODEL.generate_content(prompt, generation_config=gen_config)
 		text = (resp.text or "").strip()
-		# Try strict JSON parse first
 		items = json.loads(text)
 		if not isinstance(items, list):
 			raise ValueError("not a list")
 		return [str(x).strip() for x in items if str(x).strip()]
 	except Exception:
-		# Fallback minimal sensible defaults based on budget tiers
 		if total < 8000:
 			return ["перчатки для зала", "скакалка", "крепления для турника", "шейкер и креатин"]
 		if total < 20000:
@@ -89,7 +87,7 @@ def pick_item_for_budget(total: float, chat_id: Optional[int] = None) -> str:
 	return choice
 
 
-def generate_motivation(total_all_time: float, last_amount: float, last_category: str, chat_id: Optional[int] = None) -> str:
+def generate_motivation(total_all_time: float, last_amount: float, last_category: str, chat_id: Optional[int] = None) -> Tuple[str, str]:
 	idea = pick_item_for_budget(total_all_time, chat_id=chat_id)
 	gen_config = {"temperature": 1.25, "top_p": 0.95, "top_k": 40}
 	prompt = (
@@ -106,7 +104,7 @@ def generate_motivation(total_all_time: float, last_amount: float, last_category
 		resp = _MODEL.generate_content(prompt, generation_config=gen_config)
 		text = (resp.text or "").strip()
 		if not text:
-			return f"Жгите дальше в '{last_category}', ага. На {total_all_time:.0f} {_SETTINGS.default_currency} уже взяли бы: {idea}."
-		return text
+			return (f"Жгите дальше в '{last_category}', ага. На {total_all_time:.0f} {_SETTINGS.default_currency} уже взяли бы: {idea}.", idea)
+		return (text, idea)
 	except Exception:
-		return f"Жгите дальше в '{last_category}'. На {total_all_time:.0f} {_SETTINGS.default_currency} уже взяли бы: {idea}."
+		return (f"Жгите дальше в '{last_category}'. На {total_all_time:.0f} {_SETTINGS.default_currency} уже взяли бы: {idea}.", idea)
