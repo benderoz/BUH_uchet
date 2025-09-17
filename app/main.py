@@ -12,7 +12,7 @@ from aiogram.types import Message, FSInputFile, BufferedInputFile
 from .config import get_settings
 from .db import init_db
 from .gemini import generate_motivation
-from .imagegen import generate_banner, generate_image_gemini, STYLE_PRESETS
+from .imagegen import generate_banner, generate_image_gemini, STYLE_PRESETS, generate_banner_for_item
 from .logic import (
 	add_expense,
 	add_or_update_category,
@@ -218,18 +218,10 @@ async def on_text(message: Message) -> None:
 		await message.reply_photo(photo=file, caption=f"Стиль: {style}")
 		return
 
-	# Fallback banner
-	subtitle_variants = [
-		"Ещё немного — и берём полезную штуку",
-		"Дальше — только трезвость и покупки",
-		"Почти хватит на что-то стоящее",
-	]
-	banner = generate_banner(
-		text_top=f"Всего: {all_time:.0f} {settings.default_currency}",
-		text_bottom=random.choice(subtitle_variants),
-	)
+	# Fallback banner, include item and style so пользователь понимает, что случился фолбэк (429)
+	banner = generate_banner_for_item(item=idea, style=style, total=all_time)
 	file = BufferedInputFile(banner.getvalue(), filename="banner.png")
-	await message.reply_photo(photo=file)
+	await message.reply_photo(photo=file, caption="Изображения временно недоступны (квота). Показан баннер.")
 
 
 async def main() -> None:

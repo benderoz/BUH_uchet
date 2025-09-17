@@ -51,6 +51,12 @@ def generate_banner(text_top: str, text_bottom: Optional[str] = None, width: int
 	return bio
 
 
+def generate_banner_for_item(item: str, style: str, total: float) -> BytesIO:
+	top = f"Всего: {total:.0f} {_SETTINGS.default_currency}"
+	bottom = f"Идея: {item} | Стиль: {style}"
+	return generate_banner(top, bottom)
+
+
 def _compose_image_prompt(user_descriptions: str, item: str, total: float, style: str) -> str:
 	style_preset = STYLE_PRESETS.get(style, "")
 	return (
@@ -66,13 +72,12 @@ def _try_models_generate_image(prompt: str) -> Optional[BytesIO]:
 	if genai is None:
 		logger.warning("google-generativeai not available; skipping Gemini Images")
 		return None
-	# Allow override via env
 	override = os.getenv("IMAGE_MODEL", "").strip()
 	if override:
 		candidates = [override]
 	else:
 		candidates = [
-			"gemini-2.5-flash-image-preview",  # Correct model name from docs
+			"gemini-2.5-flash-image-preview",
 			"imagegeneration@005",
 			"imagegeneration@002",
 			"imagen-3.0",
@@ -83,7 +88,6 @@ def _try_models_generate_image(prompt: str) -> Optional[BytesIO]:
 			model = genai.GenerativeModel(name)
 			resp = model.generate_content(prompt)
 			logger.info("Gemini Images response (model=%s): %s", name, getattr(resp, "_raw_response", str(resp))[:500])
-			# Extract base64 if present
 			b64 = None
 			if getattr(resp, "media", None):
 				for m in resp.media:
@@ -103,6 +107,10 @@ def _try_models_generate_image(prompt: str) -> Optional[BytesIO]:
 			bio.seek(0)
 			return bio
 		except Exception as e:
+			msg = str(e)
+			if "429" in msg:
+				logger.warning("Gemini image quota exceeded: %s", e)
+				return None
 			logger.warning("Gemini image generation failed for model=%s: %s", name, e)
 	return None
 
