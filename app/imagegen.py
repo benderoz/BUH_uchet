@@ -72,6 +72,7 @@ def _try_models_generate_image(prompt: str) -> Optional[BytesIO]:
 		candidates = [override]
 	else:
 		candidates = [
+			"gemini-2.5-flash-image-preview",  # Correct model name from docs
 			"imagegeneration@005",
 			"imagegeneration@002",
 			"imagen-3.0",
