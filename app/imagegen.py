@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 from io import BytesIO
 from typing import Optional, Tuple
 
@@ -14,6 +15,7 @@ except Exception:
 from .config import get_settings
 
 
+logger = logging.getLogger(__name__)
 _SETTINGS = get_settings()
 
 
@@ -59,33 +61,43 @@ def _compose_image_prompt(user_descriptions: str, item: str, total: float, style
 	)
 
 
-def generate_image_gemini(user_descriptions: str, item: str, total: float, style: str) -> Optional[BytesIO]:
+def _try_models_generate_image(prompt: str) -> Optional[BytesIO]:
 	if genai is None:
+		logger.warning("google-generativeai not available; skipping Gemini Images")
 		return None
-	try:
-		model = genai.GenerativeModel("imagen-3.0")
-		prompt = _compose_image_prompt(user_descriptions, item, total, style)
-		resp = model.generate_content(prompt)
-		if not hasattr(resp, "media") and not getattr(resp, "candidates", None):
-			return None
-		# Attempt to get first image as base64
-		b64 = None
-		if getattr(resp, "media", None):
-			for m in resp.media:
-				if getattr(m, "mime_type", "").startswith("image/"):
-					b64 = m.data
-					break
-		if b64 is None and getattr(resp, "candidates", None):
-			# Some SDK variants return inline base64 in candidates
-			try:
-				b64 = resp.candidates[0].content.parts[0].inline_data.data
-			except Exception:
-				b64 = None
-		if not b64:
-			return None
-		raw = base64.b64decode(b64)
-		bio = BytesIO(raw)
-		bio.seek(0)
-		return bio
-	except Exception:
-		return None
+	model_names = [
+		"imagen-3.0",            # common name
+		"imagegeneration",        # alt name used in some SDKs
+	]
+	for name in model_names:
+		try:
+			model = genai.GenerativeModel(name)
+			resp = model.generate_content(prompt)
+			logger.info("Gemini Images response (model=%s): %s", name, getattr(resp, "_raw_response", str(resp))[:500])
+			# Extract base64 if present
+			b64 = None
+			if getattr(resp, "media", None):
+				for m in resp.media:
+					if getattr(m, "mime_type", "").startswith("image/") and getattr(m, "data", None):
+						b64 = m.data
+						break
+			if b64 is None and getattr(resp, "candidates", None):
+				try:
+					b64 = resp.candidates[0].content.parts[0].inline_data.data
+				except Exception as e:
+					logger.debug("No inline_data image in candidates: %s", e)
+			if not b64:
+				logger.info("No image data found in response for model=%s", name)
+				continue
+			raw = base64.b64decode(b64)
+			bio = BytesIO(raw)
+			bio.seek(0)
+			return bio
+		except Exception as e:
+			logger.warning("Gemini image generation failed for model=%s: %s", name, e)
+	return None
+
+
+def generate_image_gemini(user_descriptions: str, item: str, total: float, style: str) -> Optional[BytesIO]:
+	prompt = _compose_image_prompt(user_descriptions, item, total, style)
+	return _try_models_generate_image(prompt)
