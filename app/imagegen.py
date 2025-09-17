@@ -13,6 +13,13 @@ try:
 except Exception:
 	genai = None
 
+try:
+	from google import genai as genai2
+	from google.genai import types as genai2_types
+except Exception:
+	genai2 = None
+	genai2_types = None
+
 from .config import get_settings
 
 
@@ -68,21 +75,12 @@ def _compose_image_prompt(user_descriptions: str, item: str, total: float, style
 	)
 
 
-def _try_models_generate_image(prompt: str) -> Optional[BytesIO]:
+def _try_google_generativeai(prompt: str) -> Optional[BytesIO]:
 	if genai is None:
-		logger.warning("google-generativeai not available; skipping Gemini Images")
 		return None
-	override = os.getenv("IMAGE_MODEL", "").strip()
-	if override:
-		candidates = [override]
-	else:
-		candidates = [
-			"gemini-2.5-flash-image-preview",
-			"imagegeneration@005",
-			"imagegeneration@002",
-			"imagen-3.0",
-			"imagegeneration",
-		]
+	candidates = [
+		os.getenv("IMAGE_MODEL", "gemini-2.5-flash-image-preview").strip() or "gemini-2.5-flash-image-preview",
+	]
 	for name in candidates:
 		try:
 			model = genai.GenerativeModel(name)
@@ -97,10 +95,9 @@ def _try_models_generate_image(prompt: str) -> Optional[BytesIO]:
 			if b64 is None and getattr(resp, "candidates", None):
 				try:
 					b64 = resp.candidates[0].content.parts[0].inline_data.data
-				except Exception as e:
-					logger.debug("No inline_data image in candidates: %s", e)
+				except Exception:
+					b64 = None
 			if not b64:
-				logger.info("No image data found in response for model=%s", name)
 				continue
 			raw = base64.b64decode(b64)
 			bio = BytesIO(raw)
@@ -111,10 +108,53 @@ def _try_models_generate_image(prompt: str) -> Optional[BytesIO]:
 			if "429" in msg:
 				logger.warning("Gemini image quota exceeded: %s", e)
 				return None
-			logger.warning("Gemini image generation failed for model=%s: %s", name, e)
+			logger.warning("Gemini image generation failed (google-generativeai): %s", e)
 	return None
+
+
+def _try_google_genai_stream(prompt: str) -> Optional[BytesIO]:
+	if genai2 is None or genai2_types is None:
+		return None
+	try:
+		client = genai2.Client(api_key=os.getenv("GEMINI_API_KEY"))
+		contents = [
+			genai2_types.Content(role="user", parts=[genai2_types.Part.from_text(text=prompt)]),
+		]
+		config = genai2_types.GenerateContentConfig(response_modalities=["IMAGE", "TEXT"])
+		buf = None
+		for chunk in client.models.generate_content_stream(
+			model=os.getenv("IMAGE_MODEL", "gemini-2.5-flash-image-preview"),
+			contents=contents,
+			config=config,
+		):
+			if not getattr(chunk, "candidates", None):
+				continue
+			part0 = chunk.candidates[0].content.parts[0]
+			if getattr(part0, "inline_data", None) and getattr(part0.inline_data, "data", None):
+				buf = part0.inline_data.data
+				break
+		if not buf:
+			return None
+		# google-genai returns bytes already; ensure BytesIO
+		if isinstance(buf, str):
+			data = base64.b64decode(buf)
+		else:
+			data = buf
+		bio = BytesIO(data)
+		bio.seek(0)
+		return bio
+	except Exception as e:
+		msg = str(e)
+		if "429" in msg:
+			logger.warning("Gemini image quota exceeded (stream): %s", e)
+			return None
+		logger.warning("Gemini image generation failed (google-genai stream): %s", e)
+		return None
 
 
 def generate_image_gemini(user_descriptions: str, item: str, total: float, style: str) -> Optional[BytesIO]:
 	prompt = _compose_image_prompt(user_descriptions, item, total, style)
-	return _try_models_generate_image(prompt)
+	bio = _try_google_generativeai(prompt)
+	if bio:
+		return bio
+	return _try_google_genai_stream(prompt)
