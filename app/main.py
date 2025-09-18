@@ -33,8 +33,8 @@ settings = get_settings()
 bot = Bot(token=settings.telegram_bot_token)
 dp = Dispatcher()
 
-# Simple in-memory style choice per chat (stateless across restarts)
-CHAT_STYLE: dict[int, str] = {}
+# Style state per chat: 'random' or exact style name
+CHAT_STYLE: dict[int, str] = {}  # default to 'random' when not set
 STYLE_LIST = list(STYLE_PRESETS.keys())
 
 
@@ -44,11 +44,17 @@ def allowed_chat(chat_id: int) -> bool:
 	return chat_id == settings.allowed_chat_id
 
 
-def style_keyboard() -> InlineKeyboardMarkup:
+def style_keyboard(current: Optional[str] = None) -> InlineKeyboardMarkup:
 	buttons = []
+	# First row: Random
+	is_random = (current is None) or (current == "random")
+	random_text = "Случайный ✓" if is_random else "Случайный"
+	buttons.append([InlineKeyboardButton(text=random_text, callback_data="style:random")])
+	# Other styles in rows of 3
 	row = []
 	for i, name in enumerate(STYLE_LIST, start=1):
-		row.append(InlineKeyboardButton(text=name, callback_data=f"style:{name}"))
+		label = f"{name} ✓" if name == current else name
+		row.append(InlineKeyboardButton(text=label, callback_data=f"style:{name}"))
 		if i % 3 == 0:
 			buttons.append(row)
 			row = []
@@ -61,7 +67,8 @@ def style_keyboard() -> InlineKeyboardMarkup:
 async def cmd_style(message: Message) -> None:
 	if not message.chat:
 		return
-	await message.reply("Выбери стиль кнопкой ниже:", reply_markup=style_keyboard())
+	current = CHAT_STYLE.get(message.chat.id, "random")
+	await message.reply("Выбери стиль кнопкой ниже:", reply_markup=style_keyboard(current=current))
 
 
 @dp.callback_query(F.data.startswith("style:"))
@@ -69,12 +76,12 @@ async def cb_style(call: CallbackQuery) -> None:
 	if not call.message or not call.message.chat:
 		return
 	style = call.data.split(":", 1)[1]
-	if style not in STYLE_PRESETS:
+	if style != "random" and style not in STYLE_PRESETS:
 		await call.answer("Неизвестный стиль", show_alert=False)
 		return
 	CHAT_STYLE[call.message.chat.id] = style
-	await call.answer(f"Стиль: {style}", show_alert=False)
-	await call.message.edit_text(f"Стиль установлен: {style}")
+	await call.answer(f"Стиль: {('случайный' if style=='random' else style)}", show_alert=False)
+	await call.message.edit_text("Стиль обновлён.", reply_markup=style_keyboard(current=style))
 
 
 async def reply_stats(message: Message) -> None:
@@ -112,7 +119,7 @@ async def cmd_start(message: Message) -> None:
 	text = (
 		"Добавляй траты просто сообщением: '1500 алкоголь бар' или '250 суши еда'.\n"
 		"Команды: /stats, /week, /month, /all, /me, /categories, /addcat, /undo, /style.\n"
-		"Нажми /style — и выбери стиль кнопками."
+		"Нажми /style — и выбери стиль кнопками (по умолчанию — Случайный)."
 	)
 	await message.reply(text)
 
@@ -226,7 +233,11 @@ async def on_text(message: Message) -> None:
 	await message.reply(reply_text, reply_to_message_id=message.message_id)
 
 	# Image generation
-	style = CHAT_STYLE.get(message.chat.id, random.choice(STYLE_LIST))
+	style_state = CHAT_STYLE.get(message.chat.id, "random")
+	if style_state == "random":
+		style = random.choice(STYLE_LIST)
+	else:
+		style = style_state
 	user_desc_1 = await _describe_user(bot, message.from_user.id)
 	desc = f"Пара пользователей: {user_desc_1}".strip()
 	img = generate_image_gemini(desc, idea, all_time, style)
