@@ -460,6 +460,32 @@ async def cb_photo_remove(call: CallbackQuery) -> None:
 		pass
 
 
+@dp.message(Command("photodiag"))
+async def cmd_photodiag(message: Message) -> None:
+	if not message.from_user:
+		return
+	if message.from_user.id not in settings.admins:
+		await message.reply("Только админы")
+		return
+	photos = list_user_photos_with_ids(message.from_user.id)
+	exist_ok = 0
+	exist_fail = 0
+	missing = []
+	for pid, path in photos:
+		if os.path.exists(path):
+			exist_ok += 1
+		else:
+			exist_fail += 1
+			missing.append(f"{pid}:{os.path.basename(path)}")
+	await message.reply(
+		"Diag:\n"
+		f"user_id={message.from_user.id}\n"
+		f"photos_in_db={len(photos)}\n"
+		f"files_exist={exist_ok}, missing={exist_fail}\n"
+		+ ("Missing:\n" + "\n".join(missing) if missing else "")
+	)
+
+
 def reset_keyboard(chat_id: int) -> InlineKeyboardMarkup:
 	return InlineKeyboardMarkup(
 		inline_keyboard=[[InlineKeyboardButton(text="🧹 Подтвердить очистку", callback_data=f"reset:{chat_id}")]]
