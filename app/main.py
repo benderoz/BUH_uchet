@@ -24,6 +24,7 @@ from .logic import (
 	total_all_time,
 	undo_last_today,
 )
+from .db import add_wishlist_item, list_wishlist_items, remove_wishlist_item, pick_random_wishlist_item
 
 
 logging.basicConfig(level=logging.INFO)
@@ -36,6 +37,9 @@ dp = Dispatcher()
 # Style state per chat: 'random' or exact style name
 CHAT_STYLE: dict[int, str] = {}  # default to 'random' when not set
 STYLE_LIST = list(STYLE_PRESETS.keys())
+
+# Probability to use sender's wishlist item as suggestion (e.g., 30%)
+WISHLIST_PROB = 0.3
 
 
 def allowed_chat(chat_id: int) -> bool:
@@ -84,6 +88,38 @@ async def cb_style(call: CallbackQuery) -> None:
 	await call.message.edit_text("Стиль обновлён.", reply_markup=style_keyboard(current=style))
 
 
+@dp.message(Command("wishlist"))
+async def cmd_wishlist(message: Message) -> None:
+	if not message.from_user:
+		return
+	args = (message.text or "").split(maxsplit=2)
+	if len(args) == 1:
+		await message.reply("Использование: /wishlist add <предмет> | list | remove <предмет>")
+		return
+	action = args[1].lower()
+	if action == "add":
+		if len(args) < 3:
+			await message.reply("Формат: /wishlist add <предмет>")
+			return
+		item = args[2].strip()
+		add_wishlist_item(message.from_user.id, item)
+		await message.reply(f"Добавил в вишлист: {item}")
+		return
+	if action == "list":
+		items = list_wishlist_items(message.from_user.id)
+		await message.reply("Твой вишлист:\n" + ("\n".join(f"• {x}" for x in items) if items else "пусто"))
+		return
+	if action == "remove":
+		if len(args) < 3:
+			await message.reply("Формат: /wishlist remove <предмет>")
+			return
+		item = args[2].strip()
+		ok = remove_wishlist_item(message.from_user.id, item)
+		await message.reply("Удалил." if ok else "Не нашёл такой пункт.")
+		return
+	await message.reply("Неизвестная команда. Использование: /wishlist add <предмет> | list | remove <предмет>")
+
+
 async def reply_stats(message: Message) -> None:
 	if not message.chat:
 		return
@@ -118,8 +154,9 @@ async def cmd_start(message: Message) -> None:
 		return
 	text = (
 		"Добавляй траты просто сообщением: '1500 алкоголь бар' или '250 суши еда'.\n"
-		"Команды: /stats, /week, /month, /all, /me, /categories, /addcat, /undo, /style.\n"
-		"Нажми /style — и выбери стиль кнопками (по умолчанию — Случайный)."
+		"Команды: /stats, /week, /month, /all, /me, /categories, /addcat, /undo, /style, /wishlist.\n"
+		"/style — выбор стиля кнопками (по умолчанию — Случайный).\n"
+		"/wishlist add <предмет> | list | remove <предмет> — личный список хотелок."
 	)
 	await message.reply(text)
 
@@ -224,7 +261,15 @@ async def on_text(message: Message) -> None:
 		note=parsed.note,
 	)
 	all_time = total_all_time(message.chat.id)
+
+	# Use wishlist occasionally (for this sender)
+	idea_from_wishlist = None
+	if random.random() < WISHLIST_PROB:
+		idea_from_wishlist = pick_random_wishlist_item(message.from_user.id)
+
 	quip, idea = generate_motivation(all_time, parsed.amount, parsed.category, chat_id=message.chat.id)
+	if idea_from_wishlist:
+		idea = idea_from_wishlist
 
 	reply_text = (
 		f"Добавлено: {parsed.amount:.0f} {parsed.currency} в '{parsed.category}'.\n"
