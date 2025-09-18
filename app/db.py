@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Iterable, Optional, List
+from typing import Iterable, Optional, List, Tuple
 
 from sqlalchemy import String, create_engine, func, select, text, and_, delete
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
@@ -134,3 +134,15 @@ def pick_random_wishlist_item(tg_user_id: int) -> Optional[str]:
 		return None
 	import random as _r
 	return _r.choice(items)
+
+
+# Categories helpers
+
+def list_categories_with_aliases() -> List[Tuple[str, List[str]]]:
+	with session_scope() as s:
+		rows = s.execute(select(Category)).scalars().all()
+		result: List[Tuple[str, List[str]]] = []
+		for c in rows:
+			aliases = [a.strip() for a in (c.aliases or "").split("|") if a.strip()]
+			result.append((c.name, aliases))
+		return result

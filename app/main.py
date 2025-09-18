@@ -16,6 +16,7 @@ from .imagegen import generate_banner, generate_image_gemini, STYLE_PRESETS, gen
 from .logic import (
 	add_expense,
 	add_or_update_category,
+	append_aliases,
 	ensure_user,
 	parse_message,
 	sum_by_period,
@@ -24,7 +25,7 @@ from .logic import (
 	total_all_time,
 	undo_last_today,
 )
-from .db import add_wishlist_item, list_wishlist_items, remove_wishlist_item, pick_random_wishlist_item
+from .db import add_wishlist_item, list_wishlist_items, remove_wishlist_item, pick_random_wishlist_item, list_categories_with_aliases
 
 
 logging.basicConfig(level=logging.INFO)
@@ -120,6 +121,56 @@ async def cmd_wishlist(message: Message) -> None:
 	await message.reply("Неизвестная команда. Использование: /wishlist add <предмет> | list | remove <предмет>")
 
 
+@dp.message(Command("categories"))
+async def cmd_categories(message: Message) -> None:
+	pairs = list_categories_with_aliases()
+	if not pairs:
+		await message.reply("Категорий в БД нет. Используй /addcat чтобы добавить.")
+		return
+	lines = []
+	for name, aliases in pairs:
+		alias_str = ", ".join(aliases) if aliases else "—"
+		lines.append(f"{name}: {alias_str}")
+	await message.reply("Категории и алиасы:\n" + "\n".join(lines))
+
+
+@dp.message(Command("addcat"))
+async def cmd_addcat(message: Message) -> None:
+	user_id = message.from_user.id if message.from_user else 0
+	if user_id not in settings.admins:
+		await message.reply("Только админы могут управлять категориями.")
+		return
+	args = (message.text or "").split(maxsplit=2)
+	if len(args) == 1:
+		await message.reply("Форматы:\n/addcat set <имя> | алиас1 | алиас2 — перезаписать алиасы\n/addcat add <имя> | алиас1 | алиас2 — добавить алиасы")
+		return
+	action = args[1].lower()
+	if action not in {"set", "add"}:
+		await message.reply("Укажи действие: set или add")
+		return
+	if len(args) < 3:
+		await message.reply("Формат: /addcat set|add <имя> | алиас1 | алиас2")
+		return
+	payload = args[2]
+	parts = [p.strip() for p in payload.split("|")]
+	name = parts[0]
+	aliases = parts[1:] if len(parts) > 1 else []
+	if action == "set":
+		add_or_update_category(name, aliases)
+		await message.reply(f"Категория '{name}' перезаписана. Алиасы: {', '.join(aliases) if aliases else '—'}")
+		return
+	# add mode (append)
+	added, conflicts = append_aliases(name, aliases)
+	resp = []
+	if added:
+		resp.append("Добавлено: " + ", ".join(added))
+	if conflicts:
+		resp.append("Конфликт (уже занято в других категориях): " + ", ".join(conflicts))
+	if not resp:
+		resp = ["Нет изменений"]
+	await message.reply(f"Категория '{name}':\n" + "\n".join(resp))
+
+
 async def reply_stats(message: Message) -> None:
 	if not message.chat:
 		return
@@ -156,32 +207,10 @@ async def cmd_start(message: Message) -> None:
 		"Добавляй траты просто сообщением: '1500 алкоголь бар' или '250 суши еда'.\n"
 		"Команды: /stats, /week, /month, /all, /me, /categories, /addcat, /undo, /style, /wishlist.\n"
 		"/style — выбор стиля кнопками (по умолчанию — Случайный).\n"
-		"/wishlist add <предмет> | list | remove <предмет> — личный список хотелок."
+		"/wishlist add <предмет> | list | remove <предмет> — личный список хотелок.\n"
+		"/addcat set|add <имя> | алиасы — управление категориями. /categories — список."
 	)
 	await message.reply(text)
-
-
-@dp.message(Command("categories"))
-async def cmd_categories(message: Message) -> None:
-	await message.reply("Категории пополняются автоматически по алиасам. Добавить: /addcat <имя> | алиасы...")
-
-
-@dp.message(Command("addcat"))
-async def cmd_addcat(message: Message) -> None:
-	user_id = message.from_user.id if message.from_user else 0
-	if user_id not in settings.admins:
-		await message.reply("Только админы могут добавлять категории.")
-		return
-	args = (message.text or "").split(maxsplit=1)
-	if len(args) < 2:
-		await message.reply("Формат: /addcat <имя> | алиас1 | алиас2 ...")
-		return
-	payload = args[1]
-	parts = [p.strip() for p in payload.split("|")]
-	name = parts[0]
-	aliases = parts[1:] if len(parts) > 1 else []
-	add_or_update_category(name, aliases)
-	await message.reply(f"Категория '{name}' обновлена. Алиасы: {', '.join(aliases) if aliases else '—'}")
 
 
 @dp.message(Command("stats"))

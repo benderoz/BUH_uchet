@@ -215,3 +215,43 @@ def add_or_update_category(name: str, aliases: List[str]) -> None:
 			existing.aliases = alias_str
 			return
 		s.add(Category(name=name, aliases=alias_str))
+
+
+def append_aliases(name: str, new_aliases: List[str]) -> Tuple[List[str], List[str]]:
+	"""Append aliases to a category without overwriting. Returns (added, conflicts)."""
+	name = name.strip()
+	incoming = {a.strip().lower() for a in new_aliases if a.strip()}
+	if not incoming:
+		return ([], [])
+	conflicts: List[str] = []
+	added: List[str] = []
+	with session_scope() as s:
+		# Build global alias->category map to detect conflicts
+		global_map: Dict[str, str] = {}
+		for row in s.execute(select(Category)).scalars():
+			global_map[row.name.lower()] = row.name
+			if row.aliases:
+				for a in row.aliases.split("|"):
+					global_map[a.strip().lower()] = row.name
+		existing = s.execute(select(Category).where(Category.name == name)).scalar_one_or_none()
+		current_aliases = set()
+		if existing and existing.aliases:
+			current_aliases = {a.strip().lower() for a in existing.aliases.split("|") if a.strip()}
+		to_add = []
+		for a in incoming:
+			owner = global_map.get(a)
+			if owner and owner.lower() != name.lower():
+				conflicts.append(a)
+				continue
+			if a not in current_aliases and a != name.lower():
+				to_add.append(a)
+		if not existing:
+			# create category
+			existing = Category(name=name, aliases="|".join(sorted(to_add)) if to_add else None)
+			s.add(existing)
+			added = to_add
+		else:
+			merged = sorted(current_aliases.union(to_add))
+			existing.aliases = "|".join(merged) if merged else None
+			added = [a for a in to_add if a not in current_aliases]
+	return (added, conflicts)
