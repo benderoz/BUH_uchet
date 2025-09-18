@@ -68,6 +68,15 @@ class Wishlist(Base):
 	created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, index=True)
 
 
+class UserPhoto(Base):
+	__tablename__ = "user_photos"
+
+	id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+	tg_user_id: Mapped[int] = mapped_column(index=True)
+	path: Mapped[str] = mapped_column(String(300))
+	created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, index=True)
+
+
 def init_db() -> None:
 	Base.metadata.create_all(bind=engine)
 
@@ -146,3 +155,30 @@ def list_categories_with_aliases() -> List[Tuple[str, List[str]]]:
 			aliases = [a.strip() for a in (c.aliases or "").split("|") if a.strip()]
 			result.append((c.name, aliases))
 		return result
+
+
+# User photos helpers
+
+def add_user_photo(tg_user_id: int, path: str) -> None:
+	with session_scope() as s:
+		s.add(UserPhoto(tg_user_id=tg_user_id, path=path))
+
+
+def list_user_photos(tg_user_id: int) -> List[str]:
+	with session_scope() as s:
+		rows = s.execute(select(UserPhoto.path).where(UserPhoto.tg_user_id == tg_user_id).order_by(UserPhoto.created_at.desc())).all()
+		return [r[0] for r in rows]
+
+
+def pick_random_user_photo(tg_user_id: int) -> Optional[str]:
+	items = list_user_photos(tg_user_id)
+	if not items:
+		return None
+	import random as _r
+	return _r.choice(items)
+
+
+def pick_random_other_user_photo(exclude_tg_user_id: int) -> Optional[str]:
+	with session_scope() as s:
+		rows = s.execute(select(UserPhoto.path).where(UserPhoto.tg_user_id != exclude_tg_user_id).order_by(func.random())).all()
+		return rows[0][0] if rows else None

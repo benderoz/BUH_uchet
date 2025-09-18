@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import random
 from typing import Optional
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
-from aiogram.types import Message, FSInputFile, BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram.types import Message, FSInputFile, BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, PhotoSize
 
 from .config import get_settings
 from .db import init_db
@@ -25,7 +26,16 @@ from .logic import (
 	total_all_time,
 	undo_last_today,
 )
-from .db import add_wishlist_item, list_wishlist_items, remove_wishlist_item, pick_random_wishlist_item, list_categories_with_aliases
+from .db import (
+	add_wishlist_item,
+	list_wishlist_items,
+	remove_wishlist_item,
+	pick_random_wishlist_item,
+	list_categories_with_aliases,
+	add_user_photo,
+	pick_random_user_photo,
+	pick_random_other_user_photo,
+)
 
 
 logging.basicConfig(level=logging.INFO)
@@ -41,6 +51,9 @@ STYLE_LIST = list(STYLE_PRESETS.keys())
 
 # Probability to use sender's wishlist item as suggestion (e.g., 30%)
 WISHLIST_PROB = 0.3
+
+PHOTO_DIR = "/data/photos"
+os.makedirs(PHOTO_DIR, exist_ok=True)
 
 
 def allowed_chat(chat_id: int) -> bool:
@@ -119,6 +132,30 @@ async def cmd_wishlist(message: Message) -> None:
 		await message.reply("Удалил." if ok else "Не нашёл такой пункт.")
 		return
 	await message.reply("Неизвестная команда. Использование: /wishlist add <предмет> | list | remove <предмет>")
+
+
+@dp.message(Command("addphoto"))
+async def cmd_addphoto(message: Message) -> None:
+	if not message.from_user:
+		return
+	photo: Optional[PhotoSize] = None
+	# If message has photo
+	if message.photo:
+		photo = max(message.photo, key=lambda p: p.file_size or 0)
+	# Or if replying to a photo
+	elif message.reply_to_message and message.reply_to_message.photo:
+		photo = max(message.reply_to_message.photo, key=lambda p: p.file_size or 0)
+	if not photo:
+		await message.reply("Пришли команду /addphoto с фото или ответом на фото.")
+		return
+	file = await bot.get_file(photo.file_id)
+	file_path = file.file_path
+	# Save file locally under /data/photos/{user_id}_{random}.jpg
+	filename = f"{message.from_user.id}_{random.randint(1000,9999)}.jpg"
+	local_path = os.path.join(PHOTO_DIR, filename)
+	await bot.download_file(file_path, destination=local_path)
+	add_user_photo(message.from_user.id, local_path)
+	await message.reply("Фото добавлено. Будем использовать для картинок.")
 
 
 @dp.message(Command("categories"))
@@ -205,10 +242,10 @@ async def cmd_start(message: Message) -> None:
 		return
 	text = (
 		"Добавляй траты просто сообщением: '1500 алкоголь бар' или '250 суши еда'.\n"
-		"Команды: /stats, /week, /month, /all, /me, /categories, /addcat, /undo, /style, /wishlist.\n"
+		"Команды: /stats, /week, /month, /all, /me, /categories, /addcat, /undo, /style, /wishlist, /addphoto.\n"
 		"/style — выбор стиля кнопками (по умолчанию — Случайный).\n"
 		"/wishlist add <предмет> | list | remove <предмет> — личный список хотелок.\n"
-		"/addcat set|add <имя> | алиасы — управление категориями. /categories — список."
+		"/addphoto — отправь с фото или ответом на фото — сохраним для генерации."
 	)
 	await message.reply(text)
 
@@ -306,21 +343,24 @@ async def on_text(message: Message) -> None:
 	)
 	await message.reply(reply_text, reply_to_message_id=message.message_id)
 
-	# Image generation
+	# Image generation with user photos if available
 	style_state = CHAT_STYLE.get(message.chat.id, "random")
 	if style_state == "random":
 		style = random.choice(STYLE_LIST)
 	else:
 		style = style_state
-	user_desc_1 = await _describe_user(bot, message.from_user.id)
-	desc = f"Пара пользователей: {user_desc_1}".strip()
-	img = generate_image_gemini(desc, idea, all_time, style)
+
+	photo1 = pick_random_user_photo(message.from_user.id)
+	photo2 = pick_random_other_user_photo(message.from_user.id)
+	photo_paths = [p for p in [photo1, photo2] if p]
+	user_desc = "есть пользовательские фото" if photo_paths else "фото профиля недоступны"
+
+	img = generate_image_gemini(user_desc, idea, all_time, style, photo_paths=photo_paths)
 	if img:
 		file = BufferedInputFile(img.getvalue(), filename="idea.png")
 		await message.reply_photo(photo=file, caption=f"Стиль: {style}")
 		return
 
-	# Fallback banner
 	banner = generate_banner_for_item(item=idea, style=style, total=all_time)
 	file = BufferedInputFile(banner.getvalue(), filename="banner.png")
 	await message.reply_photo(photo=file, caption="Изображения временно недоступны.")

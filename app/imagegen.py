@@ -4,7 +4,7 @@ import base64
 import logging
 import os
 from io import BytesIO
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 
 from PIL import Image, ImageDraw, ImageFont, ImageStat
 
@@ -45,14 +45,13 @@ def _is_image_valid(b: bytes) -> bool:
 	try:
 		bio = BytesIO(b)
 		img = Image.open(bio)
-		img.verify()  # basic integrity
+		img.verify()
 		bio.seek(0)
 		img = Image.open(bio).convert("RGB")
 		w, h = img.size
 		if w < 128 or h < 128:
 			return False
 		stat = ImageStat.Stat(img)
-		# stddev per channel; near-zero => almost flat (e.g., gray rectangle)
 		if max(stat.stddev) < 1.0:
 			return False
 		return True
@@ -83,13 +82,13 @@ def generate_banner_for_item(item: str, style: str, total: float) -> BytesIO:
 	return generate_banner(top, bottom)
 
 
-def _compose_image_prompt(user_descriptions: str, item: str, total: float, style: str) -> str:
+def _compose_image_prompt(item: str, total: float, style: str) -> str:
 	style_preset = STYLE_PRESETS.get(style, "")
 	return (
-		"Создай горизонтальное изображение 16:9: двое парней (похоже на пользователей Telegram по описанию), "
+		"Создай горизонтальное изображение 16:9: двое парней, вдохновляясь референс‑фото, "
 		f"держат/рассматривают предмет: {item}. "
-		"Добавь атмосферу и детали по стилю. Без текста на изображении, без логотипов. "
-		f"Общий бюджет (ориентир для значимости предмета): {total:.0f} {_SETTINGS.default_currency}. "
+		"Добавь атмосферу и детали по стилю. Без текста и логотипов. "
+		f"Общий бюджет (для масштаба предмета): {total:.0f} {_SETTINGS.default_currency}. "
 		f"Стиль: {style} ({style_preset})."
 	)
 
@@ -134,14 +133,21 @@ def _try_google_generativeai(prompt: str) -> Optional[BytesIO]:
 	return None
 
 
-def _try_google_genai_stream(prompt: str) -> Optional[BytesIO]:
+def _try_google_genai_stream(prompt: str, photo_paths: Optional[List[str]]) -> Optional[BytesIO]:
 	if genai2 is None or genai2_types is None:
 		return None
 	try:
 		client = genai2.Client(api_key=os.getenv("GEMINI_API_KEY"))
-		contents = [
-			genai2_types.Content(role="user", parts=[genai2_types.Part.from_text(text=prompt)]),
-		]
+		parts = [genai2_types.Part.from_text(text=prompt)]
+		# Attach up to two reference images if paths provided
+		for p in (photo_paths or [])[:2]:
+			try:
+				with open(p, "rb") as f:
+					data = f.read()
+				parts.append(genai2_types.Part.from_inline_data(mime_type="image/jpeg", data=data))
+			except Exception:
+				continue
+		contents = [genai2_types.Content(role="user", parts=parts)]
 		config = genai2_types.GenerateContentConfig(response_modalities=["IMAGE", "TEXT"])
 		buf = None
 		for chunk in client.models.generate_content_stream(
@@ -176,9 +182,9 @@ def _try_google_genai_stream(prompt: str) -> Optional[BytesIO]:
 		return None
 
 
-def generate_image_gemini(user_descriptions: str, item: str, total: float, style: str) -> Optional[BytesIO]:
-	prompt = _compose_image_prompt(user_descriptions, item, total, style)
+def generate_image_gemini(user_descriptions: str, item: str, total: float, style: str, photo_paths: Optional[List[str]] = None) -> Optional[BytesIO]:
+	prompt = _compose_image_prompt(item, total, style)
 	bio = _try_google_generativeai(prompt)
 	if bio:
 		return bio
-	return _try_google_genai_stream(prompt)
+	return _try_google_genai_stream(prompt, photo_paths)
