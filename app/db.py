@@ -182,6 +182,22 @@ def list_user_photos(tg_user_id: int) -> List[str]:
 		return [r[0] for r in rows]
 
 
+def list_user_photos_with_ids(tg_user_id: int) -> List[Tuple[int, str]]:
+	with session_scope() as s:
+		rows = s.execute(select(UserPhoto.id, UserPhoto.path).where(UserPhoto.tg_user_id == tg_user_id).order_by(UserPhoto.created_at.desc())).all()
+		return [(r[0], r[1]) for r in rows]
+
+
+def remove_user_photo_by_id(tg_user_id: int, photo_id: int) -> Optional[str]:
+	with session_scope() as s:
+		row = s.execute(select(UserPhoto).where(and_(UserPhoto.id == photo_id, UserPhoto.tg_user_id == tg_user_id))).scalar_one_or_none()
+		if not row:
+			return None
+		path = row.path
+		s.delete(row)
+		return path
+
+
 def pick_random_user_photo(tg_user_id: int) -> Optional[str]:
 	items = list_user_photos(tg_user_id)
 	if not items:

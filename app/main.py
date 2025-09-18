@@ -37,6 +37,8 @@ from .db import (
 	add_user_photo,
 	pick_random_user_photo,
 	pick_random_other_user_photo,
+	list_user_photos_with_ids,
+	remove_user_photo_by_id,
 )
 
 
@@ -388,6 +390,47 @@ async def on_text(message: Message) -> None:
 	banner = generate_banner_for_item(item=idea, style=style, total=all_time)
 	file = BufferedInputFile(banner.getvalue(), filename="banner.png")
 	await message.reply_photo(photo=file, caption="Изображения временно недоступны.")
+
+
+def myphotos_keyboard(tg_user_id: int) -> InlineKeyboardMarkup:
+	rows = []
+	photos = list_user_photos_with_ids(tg_user_id)
+	for pid, path in photos[:10]:
+		rows.append([InlineKeyboardButton(text=f"✖ {os.path.basename(path)}", callback_data=f"ph:rm:{pid}")])
+	if not rows:
+		rows = [[InlineKeyboardButton(text="Нет фото", callback_data="ph:none")]]
+	return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@dp.message(Command("myphotos"))
+async def cmd_myphotos(message: Message) -> None:
+	if not message.from_user:
+		return
+	await message.reply("Твои фото (удаление по кнопке):", reply_markup=myphotos_keyboard(message.from_user.id))
+
+
+@dp.callback_query(F.data.startswith("ph:rm:"))
+async def cb_photo_remove(call: CallbackQuery) -> None:
+	if not call.from_user:
+		return
+	try:
+		pid = int(call.data.split(":", 2)[2])
+	except Exception:
+		await call.answer("Ошибка id", show_alert=False)
+		return
+	path = remove_user_photo_by_id(call.from_user.id, pid)
+	if path:
+		try:
+			os.remove(path)
+		except Exception:
+			pass
+		await call.answer("Удалено", show_alert=False)
+	else:
+		await call.answer("Не найдено", show_alert=False)
+	try:
+		await call.message.edit_text("Твои фото (удаление по кнопке):", reply_markup=myphotos_keyboard(call.from_user.id))
+	except Exception:
+		pass
 
 
 async def main() -> None:
