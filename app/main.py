@@ -7,7 +7,7 @@ from typing import Optional
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
-from aiogram.types import Message, FSInputFile, BufferedInputFile
+from aiogram.types import Message, FSInputFile, BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 
 from .config import get_settings
 from .db import init_db
@@ -44,20 +44,37 @@ def allowed_chat(chat_id: int) -> bool:
 	return chat_id == settings.allowed_chat_id
 
 
+def style_keyboard() -> InlineKeyboardMarkup:
+	buttons = []
+	row = []
+	for i, name in enumerate(STYLE_LIST, start=1):
+		row.append(InlineKeyboardButton(text=name, callback_data=f"style:{name}"))
+		if i % 3 == 0:
+			buttons.append(row)
+			row = []
+	if row:
+		buttons.append(row)
+	return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 @dp.message(Command("style"))
 async def cmd_style(message: Message) -> None:
-	if not message.chat or not message.text:
+	if not message.chat:
 		return
-	parts = message.text.split(maxsplit=1)
-	if len(parts) < 2:
-		await message.reply("Задай стиль: /style <стиль>. Доступно: " + ", ".join(STYLE_LIST))
+	await message.reply("Выбери стиль кнопкой ниже:", reply_markup=style_keyboard())
+
+
+@dp.callback_query(F.data.startswith("style:"))
+async def cb_style(call: CallbackQuery) -> None:
+	if not call.message or not call.message.chat:
 		return
-	style = parts[1].strip().lower()
+	style = call.data.split(":", 1)[1]
 	if style not in STYLE_PRESETS:
-		await message.reply("Не знаю такой стиль. Доступно: " + ", ".join(STYLE_LIST))
+		await call.answer("Неизвестный стиль", show_alert=False)
 		return
-	CHAT_STYLE[message.chat.id] = style
-	await message.reply(f"Стиль установлен: {style}")
+	CHAT_STYLE[call.message.chat.id] = style
+	await call.answer(f"Стиль: {style}", show_alert=False)
+	await call.message.edit_text(f"Стиль установлен: {style}")
 
 
 async def reply_stats(message: Message) -> None:
@@ -95,7 +112,7 @@ async def cmd_start(message: Message) -> None:
 	text = (
 		"Добавляй траты просто сообщением: '1500 алкоголь бар' или '250 суши еда'.\n"
 		"Команды: /stats, /week, /month, /all, /me, /categories, /addcat, /undo, /style.\n"
-		"/style <стиль> — выбор стиля картинки: " + ", ".join(STYLE_LIST)
+		"Нажми /style — и выбери стиль кнопками."
 	)
 	await message.reply(text)
 
@@ -218,10 +235,10 @@ async def on_text(message: Message) -> None:
 		await message.reply_photo(photo=file, caption=f"Стиль: {style}")
 		return
 
-	# Fallback banner, include item and style so пользователь понимает, что случился фолбэк (429)
+	# Fallback banner
 	banner = generate_banner_for_item(item=idea, style=style, total=all_time)
 	file = BufferedInputFile(banner.getvalue(), filename="banner.png")
-	await message.reply_photo(photo=file, caption="Изображения временно недоступны (квота). Показан баннер.")
+	await message.reply_photo(photo=file, caption="Изображения временно недоступны.")
 
 
 async def main() -> None:

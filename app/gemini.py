@@ -45,13 +45,15 @@ def _save_recent(chat_id: int, recent: List[str]) -> None:
 	set_state(chat_id, _recent_items_key(), json.dumps(recent[:5], ensure_ascii=False))
 
 
-def _ask_gemini_for_items(total: float, n: int = 4) -> List[str]:
-	gen_config = {"temperature": 1.0, "top_p": 0.95, "top_k": 40}
+def _ask_gemini_for_items(total: float, n: int = 6, recent: Optional[List[str]] = None) -> List[str]:
+	recent = recent or []
+	gen_config = {"temperature": 1.1, "top_p": 0.95, "top_k": 50}
 	prompt = (
 		"Ты помощник по покупкам. Дай ИДЕИ ПРЕДМЕТОВ строго на основе ОБЩЕЙ суммы за весь период (не последней траты). "
 		"Ответь ТОЛЬКО JSON массивом коротких названий вещей, без брендов и эмодзи.\n"
 		f"Интересы: {', '.join(INTERESTS)}\n"
 		f"Общая сумма за весь период: {total:.0f} {_SETTINGS.default_currency}\n"
+		f"Избегай повторов из недавнего списка: {json.dumps(recent, ensure_ascii=False)}\n"
 		f"Сколько вариантов нужно: {n}"
 	)
 	try:
@@ -62,28 +64,33 @@ def _ask_gemini_for_items(total: float, n: int = 4) -> List[str]:
 			raise ValueError("not a list")
 		return [str(x).strip() for x in items if str(x).strip()]
 	except Exception:
+		# Safety fallback by tiers
 		if total < 8000:
-			return ["перчатки для зала", "скакалка", "крепления для турника", "шейкер и креатин"]
-		if total < 20000:
-			return ["гантели и эспандеры", "чугунная сковорода", "нож шефа", "билеты на концерт"]
-		if total < 50000:
-			return ["наушники", "абонемент в зал на 6 мес.", "экшн-камера", "кожаная куртка"]
-		return ["мотоциклетный шлем", "часть комплекта резины", "инструменты для гаража", "часть айфона"]
+			base = ["перчатки для зала", "скакалка", "крепления для турника", "шейкер и креатин"]
+		elif total < 20000:
+			base = ["гантели и эспандеры", "чугунная сковорода", "нож шефа", "билеты на концерт"]
+		elif total < 50000:
+			base = ["наушники", "абонемент в зал на 6 мес.", "экшн-камера", "кожаная куртка"]
+		else:
+			base = ["мотоциклетный шлем", "часть комплекта резины", "инструменты для гаража", "часть айфона"]
+		return base
 
 
 def pick_item_for_budget(total: float, chat_id: Optional[int] = None) -> str:
-	candidates = _ask_gemini_for_items(total, n=5)
-	if not chat_id:
-		return random.choice(candidates) if candidates else "что-то полезное"
-	recent = _load_recent(chat_id)
+	recent = _load_recent(chat_id) if chat_id else []
+	candidates = _ask_gemini_for_items(total, n=8, recent=recent)
+	if not candidates:
+		return "что-то полезное"
+	# Prefer first unseen, else random
 	for c in candidates:
 		if c not in recent:
 			choice = c
 			break
 	else:
-		choice = candidates[0] if candidates else "что-то полезное"
-	new_recent = [choice] + [x for x in recent if x != choice]
-	_save_recent(chat_id, new_recent)
+		choice = random.choice(candidates)
+	if chat_id:
+		new_recent = [choice] + [x for x in recent if x != choice]
+		_save_recent(chat_id, new_recent)
 	return choice
 
 
