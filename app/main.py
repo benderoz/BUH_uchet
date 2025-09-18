@@ -53,6 +53,7 @@ dp = Dispatcher()
 # Style state per chat: 'random' or exact style name
 CHAT_STYLE: dict[int, str] = {}  # default to 'random' when not set
 STYLE_LIST = list(STYLE_PRESETS.keys())
+LAST_RANDOM_STYLE: dict[int, str] = {}
 
 # Wishlist add state per user (awaiting next text to add)
 AWAIT_WISH_TEXT: dict[int, bool] = {}
@@ -263,11 +264,12 @@ async def cmd_start(message: Message) -> None:
 		return
 	text = (
 		"Добавляй траты просто сообщением: '1500 алкоголь бар' или '250 суши еда'.\n"
-		"Команды: /stats, /week, /month, /all, /me, /categories, /addcat, /undo, /style, /wishlist, /addphoto, /myphotos.\n"
+		"Команды: /stats, /week, /month, /all, /me, /categories, /addcat, /undo, /style, /wishlist, /addphoto, /myphotos, /resetdata.\n"
 		"/style — выбор стиля кнопками (по умолчанию — Случайный).\n"
 		"/wishlist — кнопки для добавления/удаления хотелок.\n"
 		"/addphoto — отправь с фото или ответом на фото — сохраним для генерации.\n"
-		"/myphotos — список твоих фото с кнопками удаления."
+		"/myphotos — список твоих фото с кнопками удаления.\n"
+		"/resetdata — очистка трат (только админы)."
 	)
 	await message.reply(text)
 
@@ -374,7 +376,10 @@ async def on_text(message: Message) -> None:
 	# Image generation with user photos if available
 	style_state = CHAT_STYLE.get(message.chat.id, "random")
 	if style_state == "random":
-		style = random.choice(STYLE_LIST)
+		prev = LAST_RANDOM_STYLE.get(message.chat.id)
+		candidates = [s for s in STYLE_LIST if s != prev] or STYLE_LIST
+		style = random.choice(candidates)
+		LAST_RANDOM_STYLE[message.chat.id] = style
 	else:
 		style = style_state
 
