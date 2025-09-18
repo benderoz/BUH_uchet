@@ -210,3 +210,9 @@ def pick_random_other_user_photo(exclude_tg_user_id: int) -> Optional[str]:
 	with session_scope() as s:
 		rows = s.execute(select(UserPhoto.path).where(UserPhoto.tg_user_id != exclude_tg_user_id).order_by(func.random())).all()
 		return rows[0][0] if rows else None
+
+
+def delete_expenses_for_chat(chat_id: int) -> int:
+	with session_scope() as s:
+		res = s.execute(delete(Expense).where(Expense.chat_id == chat_id))
+		return res.rowcount or 0

@@ -39,6 +39,7 @@ from .db import (
 	pick_random_other_user_photo,
 	list_user_photos_with_ids,
 	remove_user_photo_by_id,
+	delete_expenses_for_chat,
 )
 
 
@@ -430,6 +431,42 @@ async def cb_photo_remove(call: CallbackQuery) -> None:
 		await call.answer("Не найдено", show_alert=False)
 	try:
 		await call.message.edit_text("Твои фото (удаление по кнопке):", reply_markup=myphotos_keyboard(call.from_user.id))
+	except Exception:
+		pass
+
+
+def reset_keyboard(chat_id: int) -> InlineKeyboardMarkup:
+	return InlineKeyboardMarkup(
+		inline_keyboard=[[InlineKeyboardButton(text="🧹 Подтвердить очистку", callback_data=f"reset:{chat_id}")]]
+	)
+
+
+@dp.message(Command("resetdata"))
+async def cmd_resetdata(message: Message) -> None:
+	if not message.from_user or not message.chat:
+		return
+	if message.from_user.id not in settings.admins:
+		await message.reply("Только админы могут очищать данные.")
+		return
+	await message.reply("Очистить все траты и статистику в этом чате?", reply_markup=reset_keyboard(message.chat.id))
+
+
+@dp.callback_query(F.data.startswith("reset:"))
+async def cb_reset(call: CallbackQuery) -> None:
+	if not call.from_user or not call.message or not call.message.chat:
+		return
+	if call.from_user.id not in settings.admins:
+		await call.answer("Недостаточно прав", show_alert=False)
+		return
+	try:
+		cid = int(call.data.split(":", 1)[1])
+	except Exception:
+		await call.answer("Ошибка", show_alert=False)
+		return
+	deleted = delete_expenses_for_chat(cid)
+	await call.answer("Готово", show_alert=False)
+	try:
+		await call.message.edit_text(f"Удалено записей: {deleted}")
 	except Exception:
 		pass
 
