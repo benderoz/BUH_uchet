@@ -413,7 +413,27 @@ def myphotos_keyboard(tg_user_id: int) -> InlineKeyboardMarkup:
 async def cmd_myphotos(message: Message) -> None:
 	if not message.from_user:
 		return
-	await message.reply("Твои фото (удаление по кнопке):", reply_markup=myphotos_keyboard(message.from_user.id))
+	try:
+		await message.reply("Твои фото (удаление по кнопке):", reply_markup=myphotos_keyboard(message.from_user.id))
+	except Exception:
+		# Fallback plain text
+		photos = list_user_photos_with_ids(message.from_user.id)
+		if not photos:
+			await message.reply("У тебя пока нет фото. Добавь через /addphoto.")
+			return
+		lines = [f"{pid}: {os.path.basename(path)}" for pid, path in photos[:10]]
+		await message.reply("Твои фото:\n" + "\n".join(lines))
+
+
+@dp.message(Command("photos"))
+async def cmd_photos_alias(message: Message) -> None:
+	# Alias to myphotos
+	await cmd_myphotos(message)
+
+
+@dp.callback_query(F.data == "ph:none")
+async def cb_ph_none(call: CallbackQuery) -> None:
+	await call.answer("Фото пока нет", show_alert=False)
 
 
 @dp.callback_query(F.data.startswith("ph:rm:"))
