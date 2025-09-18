@@ -47,14 +47,10 @@ def _is_image_valid(b: bytes) -> bool:
 		img = Image.open(bio)
 		img.verify()
 		bio.seek(0)
-		img = Image.open(bio).convert("RGB")
+		img = Image.open(bio)
 		w, h = img.size
-		if w < 128 or h < 128:
-			return False
-		stat = ImageStat.Stat(img)
-		if max(stat.stddev) < 1.0:
-			return False
-		return True
+		# Require minimum size; many valid images can be low-variance (e.g., flat backgrounds)
+		return (w >= 128 and h >= 128)
 	except Exception:
 		return False
 
