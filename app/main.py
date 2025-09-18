@@ -262,10 +262,11 @@ async def cmd_start(message: Message) -> None:
 		return
 	text = (
 		"Добавляй траты просто сообщением: '1500 алкоголь бар' или '250 суши еда'.\n"
-		"Команды: /stats, /week, /month, /all, /me, /categories, /addcat, /undo, /style, /wishlist, /addphoto.\n"
+		"Команды: /stats, /week, /month, /all, /me, /categories, /addcat, /undo, /style, /wishlist, /addphoto, /myphotos.\n"
 		"/style — выбор стиля кнопками (по умолчанию — Случайный).\n"
-		"/wishlist add <предмет> | list | remove <предмет> — личный список хотелок.\n"
-		"/addphoto — отправь с фото или ответом на фото — сохраним для генерации."
+		"/wishlist — кнопки для добавления/удаления хотелок.\n"
+		"/addphoto — отправь с фото или ответом на фото — сохраним для генерации.\n"
+		"/myphotos — список твоих фото с кнопками удаления."
 	)
 	await message.reply(text)
 
