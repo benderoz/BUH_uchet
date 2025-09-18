@@ -29,7 +29,9 @@ from .logic import (
 from .db import (
 	add_wishlist_item,
 	list_wishlist_items,
+	list_wishlist,
 	remove_wishlist_item,
+	remove_wishlist_by_id,
 	pick_random_wishlist_item,
 	list_categories_with_aliases,
 	add_user_photo,
@@ -48,6 +50,9 @@ dp = Dispatcher()
 # Style state per chat: 'random' or exact style name
 CHAT_STYLE: dict[int, str] = {}  # default to 'random' when not set
 STYLE_LIST = list(STYLE_PRESETS.keys())
+
+# Wishlist add state per user (awaiting next text to add)
+AWAIT_WISH_TEXT: dict[int, bool] = {}
 
 # Probability to use sender's wishlist item as suggestion (e.g., 30%)
 WISHLIST_PROB = 0.3
@@ -102,36 +107,49 @@ async def cb_style(call: CallbackQuery) -> None:
 	await call.message.edit_text("Стиль обновлён.", reply_markup=style_keyboard(current=style))
 
 
+def wishlist_keyboard(tg_user_id: int) -> InlineKeyboardMarkup:
+	rows = []
+	# Add button
+	rows.append([InlineKeyboardButton(text="➕ Добавить", callback_data="wl:add")])
+	# Current items with remove buttons (each row item + remove)
+	items = list_wishlist(tg_user_id)
+	for wid, text in items[:10]:
+		rows.append([InlineKeyboardButton(text=f"✖ {text}", callback_data=f"wl:rm:{wid}")])
+	return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 @dp.message(Command("wishlist"))
 async def cmd_wishlist(message: Message) -> None:
 	if not message.from_user:
 		return
-	args = (message.text or "").split(maxsplit=2)
-	if len(args) == 1:
-		await message.reply("Использование: /wishlist add <предмет> | list | remove <предмет>")
+	await message.reply("Твой вишлист:", reply_markup=wishlist_keyboard(message.from_user.id))
+
+
+@dp.callback_query(F.data == "wl:add")
+async def cb_wl_add(call: CallbackQuery) -> None:
+	if not call.from_user:
 		return
-	action = args[1].lower()
-	if action == "add":
-		if len(args) < 3:
-			await message.reply("Формат: /wishlist add <предмет>")
-			return
-		item = args[2].strip()
-		add_wishlist_item(message.from_user.id, item)
-		await message.reply(f"Добавил в вишлист: {item}")
+	AWAIT_WISH_TEXT[call.from_user.id] = True
+	await call.answer("Введи одним сообщением, что добавить", show_alert=False)
+	await call.message.edit_text("Введи одним сообщением название предмета для вишлиста")
+
+
+@dp.callback_query(F.data.startswith("wl:rm:"))
+async def cb_wl_rm(call: CallbackQuery) -> None:
+	if not call.from_user:
 		return
-	if action == "list":
-		items = list_wishlist_items(message.from_user.id)
-		await message.reply("Твой вишлист:\n" + ("\n".join(f"• {x}" for x in items) if items else "пусто"))
+	try:
+		wish_id = int(call.data.split(":", 2)[2])
+	except Exception:
+		await call.answer("Ошибка id", show_alert=False)
 		return
-	if action == "remove":
-		if len(args) < 3:
-			await message.reply("Формат: /wishlist remove <предмет>")
-			return
-		item = args[2].strip()
-		ok = remove_wishlist_item(message.from_user.id, item)
-		await message.reply("Удалил." if ok else "Не нашёл такой пункт.")
-		return
-	await message.reply("Неизвестная команда. Использование: /wishlist add <предмет> | list | remove <предмет>")
+	ok = remove_wishlist_by_id(call.from_user.id, wish_id)
+	await call.answer("Удалено" if ok else "Не найдено")
+	# Refresh keyboard
+	try:
+		await call.message.edit_text("Твой вишлист:", reply_markup=wishlist_keyboard(call.from_user.id))
+	except Exception:
+		pass
 
 
 @dp.message(Command("addphoto"))
@@ -309,6 +327,12 @@ async def _describe_user(bot: Bot, user_id: int) -> str:
 @dp.message(F.text)
 async def on_text(message: Message) -> None:
 	if not message.chat or not message.from_user or not message.text:
+		return
+	# If awaiting wishlist text from this user
+	if AWAIT_WISH_TEXT.get(message.from_user.id):
+		add_wishlist_item(message.from_user.id, message.text.strip())
+		AWAIT_WISH_TEXT.pop(message.from_user.id, None)
+		await message.reply("Добавил в вишлист.")
 		return
 	if not allowed_chat(message.chat.id):
 		return

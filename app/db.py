@@ -130,10 +130,22 @@ def list_wishlist_items(tg_user_id: int) -> List[str]:
 		return [r[0] for r in rows]
 
 
+def list_wishlist(tg_user_id: int) -> List[Tuple[int, str]]:
+	with session_scope() as s:
+		rows = s.execute(select(Wishlist.id, Wishlist.item).where(Wishlist.tg_user_id == tg_user_id).order_by(Wishlist.created_at.desc())).all()
+		return [(r[0], r[1]) for r in rows]
+
+
 def remove_wishlist_item(tg_user_id: int, item: str) -> bool:
 	item = item.strip()
 	with session_scope() as s:
 		res = s.execute(delete(Wishlist).where(and_(Wishlist.tg_user_id == tg_user_id, Wishlist.item == item)))
+		return res.rowcount > 0
+
+
+def remove_wishlist_by_id(tg_user_id: int, wish_id: int) -> bool:
+	with session_scope() as s:
+		res = s.execute(delete(Wishlist).where(and_(Wishlist.tg_user_id == tg_user_id, Wishlist.id == wish_id)))
 		return res.rowcount > 0
 
 
