@@ -1,0 +1,9 @@
+services:
+- type: worker
+  name: finance-buddy
+  env: docker
+  plan: starter
+  disk:
+    name: data
+    mountPath: /data
+    sizeGB: 1
