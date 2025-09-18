@@ -114,6 +114,13 @@ def set_state(chat_id: int, key: str, value: str) -> None:
 		s.add(BotState(chat_id=chat_id, key=key, value=value))
 
 
+def del_state(chat_id: int, key: str) -> None:
+	with session_scope() as s:
+		row = s.execute(select(BotState).where(BotState.chat_id == chat_id, BotState.key == key)).scalar_one_or_none()
+		if row:
+			s.delete(row)
+
+
 # Wishlist CRUD
 
 def add_wishlist_item(tg_user_id: int, item: str) -> None:

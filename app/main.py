@@ -40,8 +40,13 @@ from .db import (
 	list_user_photos_with_ids,
 	remove_user_photo_by_id,
 	delete_expenses_for_chat,
+	get_state,
+	set_state,
+	del_state,
 )
 
+# Image rate limit per chat
+IMAGE_COOLDOWN_SEC = 60
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -133,7 +138,7 @@ async def cmd_wishlist(message: Message) -> None:
 async def cb_wl_add(call: CallbackQuery) -> None:
 	if not call.from_user:
 		return
-	AWAIT_WISH_TEXT[call.from_user.id] = True
+	set_state(call.from_user.id, f"await_wish:{call.from_user.id}", "1")
 	await call.answer("Введи одним сообщением, что добавить", show_alert=False)
 	await call.message.edit_text("Введи одним сообщением название предмета для вишлиста")
 
@@ -161,23 +166,23 @@ async def cmd_addphoto(message: Message) -> None:
 	if not message.from_user:
 		return
 	photo: Optional[PhotoSize] = None
-	# If message has photo
 	if message.photo:
 		photo = max(message.photo, key=lambda p: p.file_size or 0)
-	# Or if replying to a photo
 	elif message.reply_to_message and message.reply_to_message.photo:
 		photo = max(message.reply_to_message.photo, key=lambda p: p.file_size or 0)
 	if not photo:
 		await message.reply("Пришли команду /addphoto с фото или ответом на фото.")
 		return
-	file = await bot.get_file(photo.file_id)
-	file_path = file.file_path
-	# Save file locally under /data/photos/{user_id}_{random}.jpg
 	filename = f"{message.from_user.id}_{random.randint(1000,9999)}.jpg"
 	local_path = os.path.join(PHOTO_DIR, filename)
-	await bot.download_file(file_path, destination=local_path)
-	add_user_photo(message.from_user.id, local_path)
-	await message.reply("Фото добавлено. Будем использовать для картинок.")
+	try:
+		await bot.download(photo, destination=local_path)
+		add_user_photo(message.from_user.id, local_path)
+		logger.info("Saved user photo: user_id=%s path=%s", message.from_user.id, local_path)
+		await message.reply("Фото добавлено. Будем использовать для картинок.")
+	except Exception as e:
+		logger.warning("Failed to save user photo: %s", e)
+		await message.reply("Не удалось сохранить фото. Попробуй ещё раз.")
 
 
 @dp.message(Command("categories"))
@@ -334,10 +339,10 @@ async def _describe_user(bot: Bot, user_id: int) -> str:
 async def on_text(message: Message) -> None:
 	if not message.chat or not message.from_user or not message.text:
 		return
-	# If awaiting wishlist text from this user
-	if AWAIT_WISH_TEXT.get(message.from_user.id):
+	# Await wishlist add?
+	if get_state(message.from_user.id, f"await_wish:{message.from_user.id}"):
 		add_wishlist_item(message.from_user.id, message.text.strip())
-		AWAIT_WISH_TEXT.pop(message.from_user.id, None)
+		del_state(message.from_user.id, f"await_wish:{message.from_user.id}")
 		await message.reply("Добавил в вишлист.")
 		return
 	if not allowed_chat(message.chat.id):
@@ -373,27 +378,32 @@ async def on_text(message: Message) -> None:
 	)
 	await message.reply(reply_text, reply_to_message_id=message.message_id)
 
-	# Image generation with user photos if available
+	# Style selection with persisted last style
 	style_state = CHAT_STYLE.get(message.chat.id, "random")
 	if style_state == "random":
-		prev = LAST_RANDOM_STYLE.get(message.chat.id)
+		prev = get_state(message.chat.id, "last_style") or None
 		candidates = [s for s in STYLE_LIST if s != prev] or STYLE_LIST
 		style = random.choice(candidates)
-		LAST_RANDOM_STYLE[message.chat.id] = style
+		set_state(message.chat.id, "last_style", style)
 	else:
 		style = style_state
-
+	# Rate limit images per chat
+	from time import time as _now
+	last_ts = float(get_state(message.chat.id, "last_img_ts") or 0)
+	if _now() - last_ts < IMAGE_COOLDOWN_SEC:
+		await message.reply("Картинка скоро будет доступна снова. Пожалуйста, подожди немного.")
+		return
+	# proceed to generate
 	photo1 = pick_random_user_photo(message.from_user.id)
 	photo2 = pick_random_other_user_photo(message.from_user.id)
 	photo_paths = [p for p in [photo1, photo2] if p]
 	user_desc = "есть пользовательские фото" if photo_paths else "фото профиля недоступны"
-
 	img = generate_image_gemini(user_desc, idea, all_time, style, photo_paths=photo_paths)
+	set_state(message.chat.id, "last_img_ts", str(_now()))
 	if img:
 		file = BufferedInputFile(img.getvalue(), filename="idea.png")
 		await message.reply_photo(photo=file, caption=f"Стиль: {style}")
 		return
-
 	banner = generate_banner_for_item(item=idea, style=style, total=all_time)
 	file = BufferedInputFile(banner.getvalue(), filename="banner.png")
 	await message.reply_photo(photo=file, caption="Изображения временно недоступны.")
@@ -520,6 +530,13 @@ async def cb_reset(call: CallbackQuery) -> None:
 		await call.message.edit_text(f"Удалено записей: {deleted}")
 	except Exception:
 		pass
+
+
+@dp.message(Command("whoami"))
+async def cmd_whoami(message: Message) -> None:
+	if not message.from_user:
+		return
+	await message.reply(f"Твой id: {message.from_user.id}")
 
 
 async def main() -> None:

@@ -3,15 +3,11 @@ from __future__ import annotations
 import base64
 import logging
 import os
+import time
 from io import BytesIO
-from typing import Optional, Tuple, List
+from typing import Optional, List
 
-from PIL import Image, ImageDraw, ImageFont, ImageStat
-
-try:
-	import google.generativeai as genai
-except Exception:
-	genai = None
+from PIL import Image, ImageDraw, ImageFont
 
 try:
 	from google import genai as genai2
@@ -49,7 +45,6 @@ def _is_image_valid(b: bytes) -> bool:
 		bio.seek(0)
 		img = Image.open(bio)
 		w, h = img.size
-		# Require minimum size; many valid images can be low-variance (e.g., flat backgrounds)
 		return (w >= 128 and h >= 128)
 	except Exception:
 		return False
@@ -91,98 +86,47 @@ def _compose_image_prompt(item: str, total: float, style: str) -> str:
 	)
 
 
-def _try_google_generativeai(prompt: str) -> Optional[BytesIO]:
-	if genai is None:
-		return None
-	candidates = [
-		os.getenv("IMAGE_MODEL", "gemini-2.5-flash-image-preview").strip() or "gemini-2.5-flash-image-preview",
-	]
-	for name in candidates:
-		try:
-			model = genai.GenerativeModel(name)
-			resp = model.generate_content(prompt)
-			logger.info("Gemini Images response (model=%s): %s", name, getattr(resp, "_raw_response", str(resp))[:500])
-			b64 = None
-			if getattr(resp, "media", None):
-				for m in resp.media:
-					if getattr(m, "mime_type", "").startswith("image/") and getattr(m, "data", None):
-						b64 = m.data
-						break
-			if b64 is None and getattr(resp, "candidates", None):
-				try:
-					b64 = resp.candidates[0].content.parts[0].inline_data.data
-				except Exception:
-					b64 = None
-			if not b64:
-				continue
-			raw = base64.b64decode(b64)
-			if not _is_image_valid(raw):
-				logger.info("Generated image failed validation (integrity/flat).")
-				continue
-			bio = BytesIO(raw)
-			bio.seek(0)
-			return bio
-		except Exception as e:
-			msg = str(e)
-			if "429" in msg:
-				logger.warning("Gemini image quota exceeded: %s", e)
-				return None
-			logger.warning("Gemini image generation failed (google-generativeai): %s", e)
-	return None
-
-
-def _try_google_genai_stream(prompt: str, photo_paths: Optional[List[str]]) -> Optional[BytesIO]:
+def _stream_image_with_refs(prompt: str, photo_paths: Optional[List[str]]) -> Optional[BytesIO]:
 	if genai2 is None or genai2_types is None:
 		return None
-	try:
-		client = genai2.Client(api_key=os.getenv("GEMINI_API_KEY"))
-		parts = [genai2_types.Part.from_text(text=prompt)]
-		# Attach up to two reference images if paths provided
-		for p in (photo_paths or [])[:2]:
-			try:
-				with open(p, "rb") as f:
-					data = f.read()
-				parts.append(genai2_types.Part.from_inline_data(mime_type="image/jpeg", data=data))
-			except Exception:
-				continue
-		contents = [genai2_types.Content(role="user", parts=parts)]
-		config = genai2_types.GenerateContentConfig(response_modalities=["IMAGE", "TEXT"])
-		buf = None
-		for chunk in client.models.generate_content_stream(
-			model=os.getenv("IMAGE_MODEL", "gemini-2.5-flash-image-preview"),
-			contents=contents,
-			config=config,
-		):
-			if not getattr(chunk, "candidates", None):
-				continue
-			part0 = chunk.candidates[0].content.parts[0]
-			if getattr(part0, "inline_data", None) and getattr(part0.inline_data, "data", None):
-				buf = part0.inline_data.data
-				break
-		if not buf:
-			return None
-		if isinstance(buf, str):
-			data = base64.b64decode(buf)
-		else:
-			data = buf
-		if not _is_image_valid(data):
-			logger.info("Streamed image failed validation (integrity/flat).")
-			return None
-		bio = BytesIO(data)
-		bio.seek(0)
-		return bio
-	except Exception as e:
-		msg = str(e)
-		if "429" in msg:
-			logger.warning("Gemini image quota exceeded (stream): %s", e)
-			return None
-		logger.warning("Gemini image generation failed (google-genai stream): %s", e)
+	client = genai2.Client(api_key=os.getenv("GEMINI_API_KEY"))
+	parts = [genai2_types.Part.from_text(text=prompt)]
+	for p in (photo_paths or [])[:2]:
+		try:
+			with open(p, "rb") as f:
+				parts.append(genai2_types.Part.from_inline_data(mime_type="image/jpeg", data=f.read()))
+		except Exception as e:
+			logger.warning("Failed to attach reference image %s: %s", p, e)
+	contents = [genai2_types.Content(role="user", parts=parts)]
+	config = genai2_types.GenerateContentConfig(response_modalities=["IMAGE"])  # focus on image
+	buf = None
+	for chunk in client.models.generate_content_stream(
+		model=os.getenv("IMAGE_MODEL", "gemini-2.5-flash-image-preview"),
+		contents=contents,
+		config=config,
+	):
+		if not getattr(chunk, "candidates", None):
+			continue
+		part0 = chunk.candidates[0].content.parts[0]
+		if getattr(part0, "inline_data", None) and getattr(part0.inline_data, "data", None):
+			buf = part0.inline_data.data
+			break
+	if not buf:
 		return None
+	data = base64.b64decode(buf) if isinstance(buf, str) else buf
+	return BytesIO(data) if _is_image_valid(data) else None
 
 
 def generate_image_gemini(user_descriptions: str, item: str, total: float, style: str, photo_paths: Optional[List[str]] = None) -> Optional[BytesIO]:
 	prompt = _compose_image_prompt(item, total, style)
-	bio = _try_google_generativeai(prompt)
-	if bio:
-		return bio
-	return _try_google_genai_stream(prompt, photo_paths)
+	# Retries with backoff
+	delays = [0, 1.0, 2.0]
+	for i, d in enumerate(delays):
+		if d:
+			time.sleep(d)
+		bio = _stream_image_with_refs(prompt, photo_paths)
+		if bio:
+			bio.seek(0)
+			return bio
+	logger.warning("All image generation attempts failed; returning None")
+	return None
