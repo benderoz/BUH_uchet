@@ -104,7 +104,10 @@ def _try_google_generativeai(prompt: str) -> Optional[BytesIO]:
 	for name in candidates:
 		try:
 			model = genai.GenerativeModel(name)
-			resp = model.generate_content(prompt)
+			resp = model.generate_content(
+				[genai.types.Part.from_text(prompt)],
+				generation_config={"response_mime_type": "image/png"},
+			)
 			logger.info("Gemini Images response (model=%s): %s", name, getattr(resp, "_raw_response", str(resp))[:500])
 			b64 = None
 			if getattr(resp, "media", None):
